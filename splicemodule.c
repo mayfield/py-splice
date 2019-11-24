@@ -17,9 +17,11 @@
  *      GNU General Public License
  */
 
+#include "Python.h"
+#include "structmember.h"
 #include <fcntl.h>
+#include <errno.h>
 #include <string.h>
-#include <Python.h>
 
 /* function declarations */
 PyMODINIT_FUNC PyInit_splice();
@@ -27,24 +29,25 @@ PyMODINIT_FUNC PyInit_splice();
 
 static PyObject * method_splice(PyObject *self, PyObject *args) {
     int fd_in;
-    loff_t off_in;
     int fd_out;
-    loff_t off_out;
-    size_t len = 0;
+    size_t len;
     unsigned int flags = 0;
     ssize_t ret;
 
-    if (!PyArg_ParseTuple(args, "iiii|nI:splice", &fd_in, &off_in, &fd_out, &off_out, &len, &flags)) {
+    if (!PyArg_ParseTuple(args, "iin|I:splice", &fd_in, &fd_out, &len, &flags)) {
         return NULL;
     }
-    ret = splice(fd_in, (off_in == -1) ? NULL : &off_in,
-                 fd_out, (off_out == -1) ? NULL : &off_out,
-                 len, flags);
-    if (ret == -1) {
-        PyErr_Format(PyExc_OSError, "splice error: %s", strerror(errno));
-        return NULL;
+    Py_BEGIN_ALLOW_THREADS
+    while (len) {
+        ret = splice(fd_in, NULL, fd_out, NULL, len, flags);
+        if (ret == -1) {
+            PyErr_Format(PyExc_OSError, "splice error: %s", strerror(errno));
+            return NULL;
+        }
+        len -= ret;
     }
-    return PyLong_FromSize_t(ret);
+    Py_END_ALLOW_THREADS
+    Py_RETURN_NONE;
 }
 
 /* structure used to describe method 
