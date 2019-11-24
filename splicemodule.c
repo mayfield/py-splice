@@ -17,136 +17,34 @@
  *      GNU General Public License
  */
 
-#define _GNU_SOURCE
-
 #include <fcntl.h>
+#include <string.h>
 #include <Python.h>
 
 /* function declarations */
-size_t fsize(int);
-int is_fd_valid(int);
 PyMODINIT_FUNC PyInit_splice();
-int validate_arguments(int, int, int, int *);
-size_t splice_copy(int, int, int, size_t, int);
-static PyObject *method_splice(PyObject *, PyObject *, PyObject *);
 
-/* return size of file 
- * using file descriptor */
-size_t 
-fsize(fd)
-{
-    size_t fsize;
-    fsize = lseek(fd, 0, SEEK_END);
-    return fsize;
-}
 
-/* check if file 
- * descriptor is valid */
-int 
-is_fd_valid(fd)
-{
-    return fcntl(fd, F_GETFD);
-}
+static PyObject * method_splice(PyObject *self, PyObject *args) {
+    int fd_in;
+    loff_t off_in;
+    int fd_out;
+    loff_t off_out;
+    size_t len = 0;
+    unsigned int flags = 0;
+    ssize_t ret;
 
-/* splice(2) syscall */
-size_t 
-splice_copy(int fd_in, int fd_out, int offset, size_t len, int flags)
-{
-    int fd_pipe[2];
-    off_t out_off = 0;
-    off_t in_off = (off_t)offset;
-    size_t bytes = 0;
-    size_t buf_size = 4096;
-    size_t total_bytes_sent = 0;
-
-    if (pipe(fd_pipe) < 0)
-    {
-        perror("Error creating pipe");
-        return 1;
-    }
-
-    while(len > 0)
-    {
-        if (buf_size > len) buf_size = len;
-
-        /* splice data to pipe */
-        bytes = splice(fd_in, &in_off, fd_pipe[1], NULL, buf_size, flags);
-        if (bytes == -1)
-        {
-            perror("Error moving data from `fd_in`");
-            return -1;
-        }
-
-        /* splice data from pipe to fd_out */
-        bytes = splice(fd_pipe[0], NULL, fd_out, &out_off, buf_size, flags);
-        if (bytes == -1)
-        {
-            perror("Error moving data to `fd_out`");
-            return -1;
-        }
-
-        len -= buf_size;
-        total_bytes_sent += bytes;
-    }
-    return total_bytes_sent;
-}
-
-/* validate arguments */
-int
-validate_arguments(int in, int out, int offset, int *nbytes)
-{
-    if (is_fd_valid(in) == -1 || is_fd_valid(out) == -1)
-    {
-        PyErr_SetString(PyExc_ValueError, "Invalid file descriptor");
-        return -1;
-    }
-
-    if (*nbytes)
-    {
-        /* check for length overflow */
-        if (*nbytes > fsize(in))
-        {
-            PyErr_SetString(PyExc_OverflowError, "Length overflow error");
-            return -1;
-        }
-    }
-    else
-    {
-        *nbytes = (size_t)fsize(in);
-    }
-
-    /* check for offset overflow */
-    if (offset > *nbytes)
-    {
-        PyErr_SetString(PyExc_OverflowError, "Offset overflow error");
-        return -1;
-    }
-    return 1;
-}
-
-static PyObject *
-method_splice(PyObject *self, PyObject *args, PyObject *kwdict)
-{
-    int validated = 0;
-    int out = -1, in = -1;
-    int status = -1, offset = 0, flags = 0, nbytes = 0;
-    static char *keywords[] = {"in", "out", "offset", "nbytes", "flags", NULL};
-
-    if (!PyArg_ParseTupleAndKeywords(args, kwdict, "ii|iii",
-                                     keywords, &in, &out, &offset, &nbytes, &flags))
-    {
+    if (!PyArg_ParseTuple(args, "iiii|nI:splice", &fd_in, &off_in, &fd_out, &off_out, &len, &flags)) {
         return NULL;
     }
-
-    validated = validate_arguments(in, out, offset, &nbytes);
-    if (validated == -1) 
-    {
+    ret = splice(fd_in, (off_in == -1) ? NULL : &off_in,
+                 fd_out, (off_out == -1) ? NULL : &off_out,
+                 len, flags);
+    if (ret == -1) {
+        PyErr_Format(PyExc_OSError, "splice error: %s", strerror(errno));
         return NULL;
     }
-
-    status = splice_copy(in, out, offset, (size_t)nbytes, flags);
-
-    return PyLong_FromLong(status);
+    return PyLong_FromSize_t(ret);
 }
 
 /* structure used to describe method 
@@ -154,8 +52,8 @@ method_splice(PyObject *self, PyObject *args, PyObject *kwdict)
 static PyMethodDef SpliceMethods[] = {
     {
         "splice", /* name of method accessible in Python */
-        method_splice, /* pointer to the actual function */
-        METH_VARARGS | METH_KEYWORDS, /* flag bits indicating calling convention */
+        (PyCFunction)method_splice, /* pointer to the actual function */
+        METH_VARARGS, /* flag bits indicating calling convention */
         "Python interace for splice(2) system call." /* docstring content */
     },
     {NULL, NULL, 0, NULL}
